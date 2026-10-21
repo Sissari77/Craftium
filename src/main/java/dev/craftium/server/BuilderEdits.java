@@ -1,0 +1,37 @@
+package dev.craftium.server;
+
+import dev.craftium.core.*;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.level.block.*;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.*;
+import java.util.*;
+
+final class BuilderEdits {
+    private BuilderEdits(){}
+    static Session.Edit plan(ServerPlayer player,Session session,Options o,Point target,Point normal,String action){
+        var p=new EditPlanner(player.level(),session,o);
+        if(action.equals("builder_extrude")){o.tool=Tool.EXTRUDE;o.strength=1;AdvancedTools.handle(p,target,normal);return p.finish(o.invert?"Shrink face":"Extrude face");}
+        if(action.equals("builder_erase_connected")){
+            var todo=new ArrayDeque<Point>();var seen=new HashSet<Point>();todo.add(target);BlockState base=p.state(target);int count=0;
+            while(!todo.isEmpty()&&count<128){Point at=todo.removeFirst();if(!seen.add(at)||!p.state(at).is(base.getBlock())||base.isAir())continue;p.put(at,Blocks.AIR.defaultBlockState());count++;for(Point n:EditPlanner.NEIGHBOURS)todo.add(at.add(n.x(),n.y(),n.z()));}return p.finish("Erase connected blocks");
+        }
+        var points=Selection.box(o.position1,o.position2);Point min=new Point(Math.min(o.position1.x(),o.position2.x()),Math.min(o.position1.y(),o.position2.y()),Math.min(o.position1.z(),o.position2.z()));Point size=new Point(Math.abs(o.position2.x()-o.position1.x())+1,Math.abs(o.position2.y()-o.position1.y())+1,Math.abs(o.position2.z()-o.position1.z())+1);
+        var source=new LinkedHashMap<Point,BlockSnapshot>();Point playerAt=EditPlanner.point(player.blockPosition());for(Point at:points){p.validate(at);if(at.distanceSquared(playerAt)>256*256)throw new IllegalArgumentException("Move within 256 blocks of the builder selection");source.put(at,BlockSnapshot.capture(player.level(),EditPlanner.pos(at)));}
+        if(o.builderTool==Options.BuilderTool.ERASE){for(Point at:points)p.put(at,Blocks.AIR.defaultBlockState());return p.finish("Erase builder selection");}
+        if(o.builderTool==Options.BuilderTool.SMEAR){var line=BrushMath.line(new Point(0,0,0),new Point(o.offsetX,o.offsetY,o.offsetZ));for(var e:source.entrySet())if(!e.getValue().state().isAir())for(int i=1;i<line.size();i++){Point delta=line.get(i),at=e.getKey().add(delta.x(),delta.y(),delta.z());if(!source.containsKey(at)&&p.solid(at))break;p.put(at,e.getValue());}return p.finish("Smear builder selection");}
+        if(o.builderTool!=Options.BuilderTool.MOVE&&o.builderTool!=Options.BuilderTool.CLONE&&o.builderTool!=Options.BuilderTool.STACK)throw new IllegalArgumentException("Choose a selection builder tool");
+        var entities=new ArrayList<Session.EntityChange>();var captureSession=new Session();captureSession.selection.combine(points,Selection.Mode.REPLACE);
+        if(o.copyEntities){var capture=ClipboardEntities.capture(player,captureSession);captureSession.clipboardEntities.addAll(capture.relative());if(o.builderTool==Options.BuilderTool.MOVE)entities.addAll(capture.removals());}
+        if(o.builderTool==Options.BuilderTool.MOVE){boolean keep=o.keepExisting;o.keepExisting=false;for(Point at:points)p.put(at,Blocks.AIR.defaultBlockState());o.keepExisting=keep;}
+        for(var entry:source.entrySet()){Point q=entry.getKey().add(-min.x(),-min.y(),-min.z());Point transformed=BuilderTransform.apply(q,size,o.builderRotation,o.builderFlipAxis);var value=entry.getValue();BlockState state=value.state();if(o.builderFlipAxis==0)state=state.mirror(Mirror.FRONT_BACK);else if(o.builderFlipAxis==2)state=state.mirror(Mirror.LEFT_RIGHT);else if(o.builderFlipAxis==1)state=verticalMirror(state);state=state.rotate(Rotation.values()[o.builderRotation]);captureSession.clipboard.put(transformed,new BlockSnapshot(state,value.data()));}
+        ClipboardEntities.transform(captureSession,v->{var relative=new Geometry.Vector(v.x()-.5,v.y()-.5,v.z()-.5);Point base=relative.voxel();Point transformed=BuilderTransform.apply(base,size,o.builderRotation,o.builderFlipAxis);var delta=relative.subtract(Geometry.vector(base));if(o.builderFlipAxis==0)delta=new Geometry.Vector(-delta.x(),delta.y(),delta.z());if(o.builderFlipAxis==1)delta=new Geometry.Vector(delta.x(),-delta.y(),delta.z());if(o.builderFlipAxis==2)delta=new Geometry.Vector(delta.x(),delta.y(),-delta.z());delta=Geometry.rotate(delta,o.builderRotation*90,0,0);return Geometry.vector(transformed).add(delta).add(new Geometry.Vector(.5,.5,.5));},o.builderRotation*90,o.builderFlipAxis>=0);
+        int count=o.builderTool==Options.BuilderTool.STACK?o.copies:1;if((long)source.size()*count>Selection.LIMIT)throw new IllegalArgumentException("Builder stack exceeds the cell limit");
+        for(int i=1;i<=count;i++){Point origin=min.add(o.offsetX*i,o.offsetY*i,o.offsetZ*i);for(var e:captureSession.clipboard.entrySet()){if(!o.pasteAir&&e.getValue().state().isAir())continue;Point q=e.getKey();p.putClipboard(origin.add(q.x(),q.y(),q.z()),e.getValue());}if(o.copyEntities)entities.addAll(ClipboardEntities.paste(player,captureSession,origin));}
+        if(entities.size()>128)throw new IllegalArgumentException("Builder entity limit: 128 changes");var edit=p.finish(o.builderTool.name().toLowerCase(Locale.ROOT)+" builder selection");return new Session.Edit(edit.name(),edit.changes(),edit.biomes(),edit.flags(),List.copyOf(entities));
+    }
+    static BlockState verticalMirror(BlockState state){
+        state=StateTransforms.flipHalf(state);
+        if(state.hasProperty(BlockStateProperties.FACING)&&state.getValue(BlockStateProperties.FACING).getAxis()==net.minecraft.core.Direction.Axis.Y)state=state.setValue(BlockStateProperties.FACING,state.getValue(BlockStateProperties.FACING).getOpposite());return state;
+    }
+}

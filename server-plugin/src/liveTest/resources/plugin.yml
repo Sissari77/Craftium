@@ -1,0 +1,8 @@
+name: CraftiumTestFixture
+version: '1.0'
+main: dev.craftium.testfixture.ProtectionFixture
+api-version: '26.2'
+depend: [Craftium]
+commands:
+  craftiumfixture:
+    permission: craftium.admin

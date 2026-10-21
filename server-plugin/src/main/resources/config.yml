@@ -1,0 +1,8 @@
+# Empty means all worlds. Entries are Bukkit world names, e.g. world or creative.
+allowed-worlds: []
+# Respect WorldGuard build checks when WorldGuard is installed.
+worldguard: true
+# Limit queued outgoing data per player; disconnect clears all queued data.
+outgoing-budget-bytes: 8000000
+# Large blueprint transfers are paced across ticks.
+outgoing-frames-per-tick: 8

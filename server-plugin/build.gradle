@@ -1,0 +1,56 @@
+plugins {
+    id 'java'
+    id 'io.papermc.paperweight.userdev' version '2.0.0-beta.24'
+}
+
+group = 'dev.craftium'
+version = rootProject.mod_version
+base { archivesName = 'craftium-server' }
+
+repositories { mavenCentral() }
+configurations { embedded }
+configurations.implementation.extendsFrom(configurations.embedded)
+
+dependencies {
+    paperweight.paperDevBundle('26.2.build.134-stable')
+    embedded 'org.luaj:luaj-jse:3.0.1'
+    testImplementation platform('org.junit:junit-bom:5.13.4')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+sourceSets.main.java {
+    setSrcDirs(['../src/main/java', 'src/main/java'])
+    exclude 'dev/craftium/Craftium.java', 'dev/craftium/mixin/**', 'dev/craftium/server/ServerCommands.java'
+}
+sourceSets {
+    liveTest {
+        compileClasspath += sourceSets.main.output + configurations.compileClasspath
+        runtimeClasspath += output + compileClasspath
+    }
+}
+tasks.register('liveTestPluginJar', Jar) {
+    dependsOn tasks.named('liveTestClasses')
+    archiveFileName = 'craftium-test-fixture.jar'
+    from sourceSets.liveTest.output
+}
+tasks.withType(JavaCompile).configureEach { options.release = 25 }
+java { sourceCompatibility = JavaVersion.VERSION_25; targetCompatibility = JavaVersion.VERSION_25; withSourcesJar() }
+test { useJUnitPlatform() }
+processResources {
+    inputs.property 'version', project.version
+    filesMatching('plugin.yml') { expand version: project.version }
+    from(rootProject.file('src/main/resources/assets/craftium/icon.png')) { into 'assets/craftium' }
+    from(rootProject.file('branding/craftium.svg')) { into 'assets/craftium' }
+}
+jar {
+    from({ configurations.embedded.collect { zipTree(it) } })
+    from(rootProject.file('LICENSE')) { rename { 'LICENSE_Craftium' } }
+    from(rootProject.file('THIRD-PARTY-NOTICES.md'))
+    exclude 'META-INF/*.SF', 'META-INF/*.DSA', 'META-INF/*.RSA'
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    manifest { attributes 'paperweight-mappings-namespace': 'mojang' }
+}
+
+// Paperweight also contributes a source root; retain one copy of shared sources.
+tasks.named('sourcesJar') { duplicatesStrategy = DuplicatesStrategy.EXCLUDE }
